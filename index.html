@@ -102,10 +102,16 @@
 </div>
 
 <script>
-  // ============ CONFIGURACIÓN ============
-  const PULL_KEY = "l4ejgxknreclvz8r";
-  const MAPBOX_TOKEN = "pk.eyJ1IjoiZ2FyZWw0IiwiYSI6ImNtdTV6MjQ5bDAwZmsyd3BraG9xczFucW4ifQ.-a1JVgmy4eixi_IPL4GntA";
-  const FATIGUE_HOURS = 4;
+  // ============ CONFIGURACIÓN (leída de la URL, nada queda escrito en el código) ============
+  const params = new URLSearchParams(window.location.search);
+  const PULL_KEY = params.get('key');
+  const MAPBOX_TOKEN = params.get('mbtoken');
+  const FATIGUE_HOURS = parseFloat(params.get('fatigue')) || 4;
+
+  if (!PULL_KEY || !MAPBOX_TOKEN) {
+    document.body.innerHTML = "<div style='color:white;font-size:12px;padding:10px;'>Faltan parámetros ?key= y ?mbtoken= en la URL</div>";
+    throw new Error("Faltan parámetros key/mbtoken en la URL");
+  }
 
   mapboxgl.accessToken = MAPBOX_TOKEN;
 
@@ -127,22 +133,24 @@
     }
   });
 
-  // ===== Conexión a RTIRL =====
-  const script = document.createElement("script");
-  script.src = "https://unpkg.com/@rtirl/api@latest/dist/index.global.js";
-  script.onload = () => {
-    RealtimeIRL.forPullKey(PULL_KEY, { forceWebSockets: true })
-      .addLocationListener(function (location) {
-        map.setCenter([location.longitude, location.latitude]);
-
-        // La flecha rota según tu rumbo; el mapa NO rota, Norte queda siempre arriba
-        if (typeof location.heading === "number" && !isNaN(location.heading)) {
+  // ===== Conexión a RTIRL vía polling HTTP (más simple, sin CORS/CDN issues) =====
+  async function pollLocation() {
+    try {
+      const res = await fetch(`https://rtirl.com/api/pull?key=${PULL_KEY}`);
+      const data = await res.json();
+      if (data.location) {
+        map.setCenter([data.location.longitude, data.location.latitude]);
+        if (typeof data.location.heading === "number" && !isNaN(data.location.heading)) {
           document.getElementById("arrow").style.transform =
-            `translate(-50%, -50%) rotate(${location.heading}deg)`;
+            `translate(-50%, -50%) rotate(${data.location.heading}deg)`;
         }
-      });
-  };
-  document.body.appendChild(script);
+      }
+    } catch (e) {
+      console.log("RTIRL poll error:", e);
+    }
+  }
+  setInterval(pollLocation, 5000);
+  pollLocation();
 
   // ===== Barra azul: se agota con el tiempo en vivo =====
   const streamStartTime = Date.now();

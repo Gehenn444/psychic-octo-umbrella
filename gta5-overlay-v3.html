@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.js"></script>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.0.1/mapbox-gl.css" rel="stylesheet" />
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    background: transparent;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+  }
+
+  :root {
+    --map-width: 1000px;
+    --map-height: 750px;
+    --fatigue-hours: 4;
+  }
+
+  #wrapper { width: var(--map-width); position: relative; }
+
+  #map-container {
+    width: var(--map-width);
+    height: var(--map-height);
+    position: relative;
+    overflow: hidden;
+    opacity: 0.75;
+  }
+
+  #map { width: 100%; height: 100%; }
+
+  .mapboxgl-ctrl-logo, .mapboxgl-ctrl-attrib { transform: scale(0.6); opacity: 0.5; transform-origin: bottom left; }
+
+  /* Flecha blanca central fija: tu posición y dirección */
+  #arrow {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 0; height: 0;
+    border-left: 9px solid transparent;
+    border-right: 9px solid transparent;
+    border-bottom: 22px solid #ffffff;
+    transform: translate(-50%, -50%) rotate(0deg);
+    transform-origin: center center;
+    z-index: 1000;
+    pointer-events: none;
+    filter: drop-shadow(0 0 4px rgba(0,0,0,0.9));
+  }
+
+  /* Burbuja de brújula, siempre fija señalando el Norte real */
+  #compass {
+    position: absolute;
+    top: 8px; right: 8px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    font-size: 13px;
+    color: rgba(0,0,0,0.75);
+    z-index: 1000;
+    box-shadow: 0 0 4px rgba(0,0,0,0.6);
+  }
+
+  #bars {
+    width: var(--map-width);
+    margin-top: 6px;
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+  }
+
+  .bar-track {
+    flex: 1;
+    height: 10px;
+    background: rgba(0,0,0,0.6);
+    border: 1px solid rgba(255,255,255,0.4);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+
+  .bar-fill { height: 100%; transition: width 1s linear; }
+
+  #bar-blue .bar-fill  { background: linear-gradient(90deg,#3498db,#2980b9); width: 100%; }
+  #bar-green .bar-fill { background: linear-gradient(90deg,#2ecc71,#27ae60); width: 100%; }
+</style>
+</head>
+<body>
+
+<div id="wrapper">
+  <div id="map-container">
+    <div id="map"></div>
+    <div id="arrow"></div>
+    <div id="compass">N</div>
+  </div>
+  <div id="bars">
+    <div class="bar-track" id="bar-blue"><div class="bar-fill"></div></div>
+    <div class="bar-track" id="bar-green"><div class="bar-fill"></div></div>
+  </div>
+</div>
+
+<script>
+  // ============ CONFIGURACIÓN (leída de la URL, nada queda escrito en el código) ============
+  const params = new URLSearchParams(window.location.search);
+  const PULL_KEY = params.get('key');
+  const MAPBOX_TOKEN = params.get('mbtoken');
+  const FATIGUE_HOURS = parseFloat(params.get('fatigue')) || 4;
+
+  if (!PULL_KEY || !MAPBOX_TOKEN) {
+    document.body.innerHTML = "<div style='color:white;font-size:12px;padding:10px;'>Faltan parámetros ?key= y ?mbtoken= en la URL</div>";
+    throw new Error("Faltan parámetros key/mbtoken en la URL");
+  }
+
+  mapboxgl.accessToken = MAPBOX_TOKEN;
+
+  const map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/dark-v11', // estilo oscuro tipo radar
+    center: [-75.5812, 6.2442], // Medellín por defecto
+    zoom: 16,
+    pitch: 55,           // ← inclinación 3D real, como el radar del juego
+    bearing: 0,           // el mapa queda con el Norte fijo arriba
+    interactive: false,
+    attributionControl: true,
+  });
+
+  // Habilita edificios en 3D si el estilo los trae
+  map.on('load', () => {
+    if (map.getLayer('building')) {
+      map.setPaintProperty('building', 'fill-extrusion-height', ['get', 'height']);
+    }
+  });
+
+  // ===== Conexión a RTIRL =====
+  const script = document.createElement("script");
+  script.src = "https://unpkg.com/@rtirl/api@latest/dist/index.global.js";
+  script.onload = () => {
+    RealtimeIRL.forPullKey(PULL_KEY, { forceWebSockets: true })
+      .addLocationListener(function (location) {
+        map.setCenter([location.longitude, location.latitude]);
+
+        // La flecha rota según tu rumbo; el mapa NO rota, Norte queda siempre arriba
+        if (typeof location.heading === "number" && !isNaN(location.heading)) {
+          document.getElementById("arrow").style.transform =
+            `translate(-50%, -50%) rotate(${location.heading}deg)`;
+        }
+      });
+  };
+  document.body.appendChild(script);
+
+  // ===== Barra azul: se agota con el tiempo en vivo =====
+  const streamStartTime = Date.now();
+  function updateFatigueBar() {
+    const elapsedHours = (Date.now() - streamStartTime) / (1000 * 60 * 60);
+    let pct = 100 - (elapsedHours / FATIGUE_HOURS) * 100;
+    if (pct < 0) pct = 0;
+    document.querySelector("#bar-blue .bar-fill").style.width = pct + "%";
+  }
+  setInterval(updateFatigueBar, 5000);
+  updateFatigueBar();
+</script>
+
+</body>
+</html>
